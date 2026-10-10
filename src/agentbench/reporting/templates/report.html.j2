@@ -243,13 +243,27 @@ footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
     </table></div>
   {% endif %}
   {% else %}
+    <h3>Load comparison</h3>
+    <p class="note">Targets run separately with the same stages and prompt cycle. Sample counts may differ. Mock targets are simulations.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Target</th><th>Source</th><th>Reported model</th><th class="num">Requests</th><th class="num">p95</th><th class="num">p99</th><th class="num">Queue p95</th><th class="num">Peak calls</th><th class="num">Correct RPS</th><th class="num">Correct within latency target RPS</th><th>Objectives</th></tr></thead>
+      <tbody>{% for t in s.targets %}{% set b = s.blocks[t] %}<tr>
+        <td><code>{{ t }}</code></td><td>{{ 'Simulated' if run.manifest.targets.get(t, {}).get('provider') == 'mock' else 'API / agent' }}</td>
+        <td>{{ (b.get('models') or [])|join(', ') }}</td><td class="num">{{ b.total_requests }}</td>
+        <td class="num">{{ ms(b.latency_ms.p95) }}</td><td class="num">{{ ms(b.latency_ms.p99) }}</td>
+        <td class="num">{{ ms(b.get('queue_wait_ms', {}).get('p95')) }}</td><td class="num">{{ b.get('peak_api_concurrency', '–') }}</td>
+        <td class="num">{{ b.get('goodput_rps', '–') }}</td><td class="num">{{ b.get('slo_goodput_rps', '–') }}</td><td>{{ b.get('slo_verdict', 'unavailable') }}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
     {% for t in s.targets %}{% set b = s.blocks[t] %}
     <h3><code>{{ t }}</code></h3>
+    {% if b.get('slo') %}<p class="note">Stage objectives: p95 ≤ {{ ms(b.slo.latency_ms) }}, pass rate ≥ {{ pct(b.slo.min_pass_rate) }}, API errors ≤ {{ pct(b.slo.max_error_rate) }}, at least {{ b.slo.min_samples }} samples. Stopped: {{ b.get('stop_reason', 'duration') }}.</p>{% endif %}
+    {% if b.get('tail_sample_warning') %}<p class="note">Fewer than 100 samples: tail latency estimates are sensitive to individual requests.</p>{% endif %}
     <div class="scroll"><table>
-      <thead><tr><th>Stage</th><th class="num">Users</th><th class="num">Requests</th><th class="num">Throughput</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th><th class="num">Errors</th><th class="num">Timeouts</th><th class="num">Pass rate</th></tr></thead>
+      <thead><tr><th>Stage</th><th class="num">Users</th><th class="num">Requests</th><th class="num">Throughput</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th><th class="num">Errors</th><th class="num">Timeouts</th><th class="num">Pass rate</th><th class="num">Queue p95</th><th>Objectives</th></tr></thead>
       <tbody>{% for st in b.stages %}<tr><td>{{ st.stage }}</td><td class="num">{{ st.users }}</td><td class="num">{{ st.requests }}</td><td class="num">{{ st.throughput_rps }} rps</td>
         <td class="num">{{ ms(st.latency_ms.p50) }}</td><td class="num">{{ ms(st.latency_ms.p95) }}</td><td class="num">{{ ms(st.latency_ms.p99) }}</td>
-        <td class="num">{{ pct(st.error_rate) }}</td><td class="num">{{ pct(st.timeout_rate) }}</td><td class="num">{{ pct(st.accuracy) }}</td></tr>{% endfor %}</tbody>
+        <td class="num">{{ pct(st.error_rate) }}</td><td class="num">{{ pct(st.timeout_rate) }}</td><td class="num">{{ pct(st.accuracy) }}</td><td class="num">{{ ms(st.get('queue_wait_ms', {}).get('p95')) }}</td><td>{{ st.get('slo_verdict', 'unavailable') }}</td></tr>{% endfor %}</tbody>
     </table></div>
     <p class="note">{{ b.total_requests }} requests in {{ b.wall_time_s }}s ({{ b.achieved_rps }} rps average, {{ b.peak_rps }} peak).
       {% if b.accuracy_drop_under_load_pp is not none %}Pass rate fell {{ b.accuracy_drop_under_load_pp }}pp from the first stage to the worst stage.{% endif %}</p>

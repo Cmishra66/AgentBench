@@ -3,6 +3,7 @@ import { api, type Job, type LaunchBody } from "../api";
 import { suiteTitle, usd, when } from "../format";
 import { useAsync } from "../hooks";
 import { href } from "../router";
+import { DEFAULT_LOAD, LoadControls, type LoadSettings } from "../components/LoadControls";
 
 function JobStatus({ job }: { job: Job }) {
   const pctDone = job.total ? Math.round((job.done / job.total) * 100) : 0;
@@ -23,9 +24,10 @@ function JobStatus({ job }: { job: Job }) {
           <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pctDone}>
             <div style={{ width: `${pctDone}%` }} />
           </div>
-          <span className="note">{job.total ? `${job.done} of ${job.total} work items` : "Starting…"}</span>
+          <span className="note">{job.total ? `${job.done} of ${job.total} ${job.suites?.length === 1 && job.suites[0] === "load" ? "targets finished; stages and in-flight calls must finish" : "work items"}` : "Starting…"}</span>
         </>
       )}
+      {job.targets && <p className="note">Targets: {job.targets.map((t) => `${t.id} (${t.source === "simulation" ? "simulated" : "API"}${t.model ? `: ${t.model}` : ""})`).join("; ")}</p>}
       {job.error && <div className="error-box">{job.error}</div>}
     </div>
   );
@@ -40,7 +42,7 @@ export default function TestLab() {
   const [concurrency, setConcurrency] = useState(16);
   const [limit, setLimit] = useState<string>("");
   const [maxUsd, setMaxUsd] = useState<string>("");
-  const [profile, setProfile] = useState("smoke");
+  const [loadOptions, setLoadOptions] = useState<LoadSettings>(DEFAULT_LOAD);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<Awaited<ReturnType<typeof api.estimate>> | null>(null);
@@ -80,7 +82,7 @@ export default function TestLab() {
     concurrency,
     limit: limit ? Number(limit) : null,
     max_usd: maxUsd ? Number(maxUsd) : null,
-    options: suites.includes("load") ? { load: { profile } } : {},
+    options: suites.includes("load") ? { load: { ...loadOptions } } : {},
   });
 
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
@@ -108,6 +110,8 @@ export default function TestLab() {
   if (!cfg) return <p className="note">Loading configuration…</p>;
   const models = cfg.targets.filter((t) => t.kind === "model");
   const agents = cfg.targets.filter((t) => t.kind === "agent");
+  const apiModels = models.filter((t) => t.available && t.source === "api");
+  const uniqueApiModels = apiModels.filter((t, i) => apiModels.findIndex((other) => other.provider === t.provider && other.model === t.model) === i);
   return (
     <>
       <div className="page-head">
@@ -133,19 +137,30 @@ export default function TestLab() {
             );
           })}
         </div>
-        {suites.includes("load") && (
-          <div className="row" style={{ marginTop: 12 }}>
-            <label className="field">
-              Load profile
-              <select value={profile} onChange={(e) => setProfile(e.target.value)}>
-                <option value="smoke">Smoke: 2 users for 5s</option>
-                <option value="steady">Steady: 8 users for 20s</option>
-                <option value="ramp">Ramp: 2 to 32 users over 32s</option>
-                <option value="spike">Spike: 4, then 48, then 4 users</option>
-              </select>
-            </label>
+      </section>
+
+      {suites.includes("load") && <LoadControls config={cfg} value={loadOptions} onChange={setLoadOptions} />}
+
+      <section className="panel" aria-labelledby="selected-targets-h">
+        <h2 id="selected-targets-h">Targets for this run</h2>
+        <p>{chosenTargets.length ? chosenTargets.map((id) => {
+          const t = cfg.targets.find((item) => item.id === id)!;
+          return `${id} (${t.source === "simulation" ? "simulated" : "API"}${t.model ? `: ${t.model}` : ""})`;
+        }).join("; ") : "Select a model or agent below."}</p>
+        {suites.includes("load") && <>
+          <div className="row">
+          <button className="btn primary" type="button" disabled={uniqueApiModels.length < 2}
+            onClick={() => setTargets(uniqueApiModels.slice(0, 2).map((t) => t.id))}>Compare API models</button>
+          <button className="btn" type="button" disabled={!models.some((t) => t.available && t.source === "api") || !models.some((t) => t.available && t.source === "simulation")}
+            onClick={() => {
+              const real = models.find((t) => t.id === "openrouter" && t.available) ?? models.find((t) => t.available && t.source === "api");
+              const mock = models.find((t) => t.id === "mock-strong" && t.available) ?? models.find((t) => t.available && t.source === "simulation");
+              if (real && mock) setTargets([real.id, mock.id]);
+            }}>Compare API and mock</button>
           </div>
-        )}
+          <p className="note" style={{ marginTop: 8 }}>Compare API models selects the first two available distinct models. You can change the targets below.</p>
+          <p className="note" style={{ marginTop: 8 }}>Mock timings and quality are simulated. Compare them to exercise the platform; use two real API targets for model performance claims.</p>
+        </>}
       </section>
 
       {[{ title: "Models", list: models, kind: "model" }, { title: "Agents", list: agents, kind: "agent" }].map((group) => (
@@ -161,6 +176,7 @@ export default function TestLab() {
                   <input type="checkbox" disabled={!usable} checked={on} onChange={() => setTargets(toggle(targets, t.id))} />
                   <span>
                     <b className="mono" style={{ fontSize: 13.5 }}>{t.id}</b>
+                    <span>{t.source === "simulation" ? "Simulated" : "API"}{t.max_concurrency ? ` · configured call limit ${t.max_concurrency}` : ""}</span>
                     <span>
                       {t.agent ? `${t.agent.preset} preset on ${t.agent.model_target}` : `${t.provider}${t.model ? `, ${t.model}` : ""}`}
                       {t.description ? `. ${t.description}` : ""}
@@ -227,7 +243,7 @@ export default function TestLab() {
                 ))}
               </tbody>
             </table>
-            <p className="note">Roughly {usd(estimate.total_usd)} against a limit of {usd(estimate.budget_usd)}. Mock targets use illustrative prices.</p>
+            <p className="note">{estimate.total_usd == null ? "Load-test cost depends on completed requests and token usage." : `Roughly ${usd(estimate.total_usd)}.`} Spend limit: {usd(estimate.budget_usd)}. Mock targets use illustrative prices.</p>
           </div>
         )}
         {job && <div style={{ marginTop: 16 }}><JobStatus job={job} /></div>}

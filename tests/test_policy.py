@@ -69,6 +69,29 @@ async def test_retries_transient_errors_and_meters_them():
     assert resp.text == "ok" and p.calls == 3
     assert meter.attempts == 3 and meter.retries == 2 and meter.cost_usd == pytest.approx(5.0)
     assert meter.models == {"scripted-1"}
+    assert meter.attempt_error_counts == {"rate_limit": 1, "server": 1}
+    assert len(meter.api_latency_ms) == 3
+    assert meter.peak_api_concurrency == 1
+
+
+async def test_provider_queue_wait_and_actual_concurrency():
+    provider = Scripted([], delay=0.04)
+    provider.target.max_concurrency = 1
+    wrapper = managed(provider)
+
+    async def call():
+        meter, token = start_meter()
+        try:
+            await wrapper.complete(req())
+            return meter
+        finally:
+            stop_meter(token)
+
+    meters = await asyncio.gather(call(), call())
+    assert all(m.peak_api_concurrency == 1 for m in meters)
+    assert max(m.queue_wait_ms for m in meters) >= 20
+    assert all(len(m.api_latency_ms) == 1 for m in meters)
+    assert wrapper.inflight == 0
 
 
 async def test_non_retryable_errors_fail_fast():

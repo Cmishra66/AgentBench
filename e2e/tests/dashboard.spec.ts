@@ -30,7 +30,7 @@ test.describe("Failure explorer", () => {
     await page.goto("/#/failures");
     await page.getByLabel("Suite").selectOption("tool_use");
     await page.getByLabel("Target").selectOption("agent-naive-retries");
-    const items = page.getByRole("option");
+    const items = page.getByRole("listbox", { name: "Results" }).getByRole("option");
     await expect(items.first()).toBeVisible();
     await page.getByRole("option", { name: /email-timeout-after-commit/ }).click();
     await expect(page.getByRole("heading", { name: "Committed side effects" })).toBeVisible();
@@ -40,11 +40,62 @@ test.describe("Failure explorer", () => {
   test("search narrows the list", async ({ page }) => {
     await page.goto("/#/failures?status=all");
     await page.getByRole("searchbox", { name: "Search" }).fill("classification-001");
-    await expect(page.getByRole("option").first()).toContainText("classification-001");
+    await expect(page.getByRole("listbox", { name: "Results" }).getByRole("option").first()).toContainText("classification-001");
   });
 });
 
 test.describe("Test lab", () => {
+  test("selects distinct Nex and Nemotron API models for comparison", async ({ page }) => {
+    await page.route("**/api/config", async (route) => {
+      const response = await route.fetch();
+      const config = await response.json();
+      for (const target of config.targets) {
+        if (["openrouter", "nemotron-ultra"].includes(target.id)) target.available = true;
+      }
+      const nex = config.targets.find((target: { id: string }) => target.id === "openrouter");
+      nex.model = "nex-agi/nex-n2.5-mini";
+      const index = config.targets.findIndex((target: { id: string }) => target.id === "nemotron-ultra");
+      config.targets[index].model = "nvidia/nemotron-3-ultra-550b-a55b:free";
+      config.targets.splice(index, 0, { ...nex, id: "nex-alias" });
+      await route.fulfill({ response, json: config });
+    });
+    await page.goto("/#/lab");
+    await page.getByRole("checkbox", { name: /^Accuracy / }).uncheck();
+    await page.getByRole("checkbox", { name: /^Load and performance / }).check();
+    await page.getByRole("button", { name: "Compare API models", exact: true }).click();
+    const selected = page.getByRole("region", { name: "Targets for this run", exact: true });
+    await expect(selected).toContainText("openrouter (API: nex-agi/nex-n2.5-mini)");
+    await expect(selected).toContainText("nemotron-ultra (API: nvidia/nemotron-3-ultra-550b-a55b:free)");
+    await expect(page.getByRole("checkbox", { name: /^openrouter / })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: /^nemotron-ultra / })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: /^nex-alias / })).not.toBeChecked();
+    await expect(page.getByRole("checkbox", { name: /^mock-strong / })).not.toBeChecked();
+  });
+
+  test("compares load targets and shows limits, queueing and stage objectives", async ({ page }) => {
+    await page.goto("/#/lab");
+    await page.getByRole("checkbox", { name: /^Accuracy / }).uncheck();
+    await page.getByRole("checkbox", { name: /^Load and performance / }).check();
+    const modelChoices = page.locator('section[aria-labelledby="t-model"] input[type="checkbox"]');
+    for (const box of await modelChoices.all()) if (await box.isChecked()) await box.uncheck();
+    await page.getByRole("checkbox", { name: /^mock-strong / }).check();
+    await page.getByRole("checkbox", { name: /^mock-fast / }).check();
+    await page.getByLabel("Stage 1 duration in seconds").fill("0.2");
+    await page.getByLabel("Max requests per target").fill("6");
+    await page.getByLabel("Max simultaneous calls").fill("2");
+    await page.getByLabel("Minimum samples per stage").fill("1");
+    await page.getByLabel("Label", { exact: true }).fill("e2e-load-comparison");
+    await page.getByRole("button", { name: "Start run" }).click();
+    await expect(page.getByText(/^Targets:.*mock-fast.*simulated/).first()).toBeVisible();
+    await page.getByRole("region", { name: "Run settings", exact: true }).getByRole("link", { name: "View run" }).click();
+    const comparison = page.getByRole("table", { name: "Load comparison", exact: true });
+    await expect(comparison.getByRole("columnheader", { name: "mock-fast" })).toBeVisible();
+    await expect(comparison.getByRole("columnheader", { name: "mock-strong" })).toBeVisible();
+    await expect(comparison.getByRole("cell", { name: "Client queue p95", exact: true })).toBeVisible();
+    await expect(comparison.getByRole("cell", { name: "Correct answers per second", exact: true })).toBeVisible();
+    await expect(comparison.getByRole("cell", { name: "Observed peak calls", exact: true })).toBeVisible();
+  });
+
   test("launches a run and links to it when finished", async ({ page }) => {
     await page.goto("/#/lab");
     await expect(page.getByRole("heading", { name: "Test lab" })).toBeVisible();
@@ -56,11 +107,11 @@ test.describe("Test lab", () => {
     const fast = page.getByRole("checkbox", { name: /^mock-fast / });
     if (!(await fast.isChecked())) await fast.check();
     await page.getByLabel("Cases per suite (optional)").fill("5");
-    await page.getByLabel("Label").fill("e2e-from-lab");
+    await page.getByLabel("Label", { exact: true }).fill("e2e-from-lab");
     await page.getByRole("button", { name: "Estimate cost" }).click();
     await expect(page.getByRole("cell", { name: "mock-fast" })).toBeVisible();
     await page.getByRole("button", { name: "Start run" }).click();
-    const view = page.getByRole("link", { name: "View run" }).first();
+    const view = page.getByRole("region", { name: "Run settings", exact: true }).getByRole("link", { name: "View run" });
     await expect(view).toBeVisible({ timeout: 30_000 });
     await view.click();
     await expect(page.getByRole("heading", { name: "e2e-from-lab" })).toBeVisible();
@@ -71,8 +122,12 @@ test.describe("Regression history", () => {
   test("compares two runs and shows a gate verdict", async ({ page }) => {
     await page.goto("/#/history?suite=core&target=mock-strong");
     await expect(page.getByRole("heading", { name: "Pass rate" })).toBeVisible();
-    await page.getByLabel("Baseline").selectOption({ label: /e2e-baseline/ });
-    await page.getByLabel("Candidate").selectOption({ label: /e2e-candidate/ });
+    for (const [field, label] of [["Baseline", "e2e-baseline"], ["Candidate", "e2e-candidate"]]) {
+      const select = page.getByRole("combobox", { name: field, exact: true });
+      const value = await select.locator("option").filter({ hasText: label }).getAttribute("value");
+      expect(value).toBeTruthy();
+      await select.selectOption(value!);
+    }
     await page.getByRole("button", { name: "Compare runs" }).click();
     await expect(page.locator(".verdict b")).toHaveText(/Pass|Investigate|Blocked/);
     await expect(page.getByRole("cell", { name: "core.accuracy" }).first()).toBeVisible();

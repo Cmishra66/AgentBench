@@ -28,7 +28,9 @@ REPO = Path(__file__).resolve().parents[1]
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("agentbench")
-    group.addoption("--ab-config", default=str(REPO / "configs" / "agentbench.yaml"), help="AgentBench config")
+    group.addoption(
+        "--ab-config", default=str(REPO / "configs" / "agentbench.yaml"), help="AgentBench config"
+    )
     group.addoption("--ab-target", default="mock-strong", help="Model target for core/injection/tool_use")
     group.addoption("--ab-agent", default="agent-secure", help="Agent target for the isolation suite")
     group.addoption("--ab-category", action="append", default=[], help="Only these categories")
@@ -46,8 +48,11 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     cfg = load_config(metafunc.config.getoption("--ab-config"))
     suite = get_suite(suite_name)
     plan = cfg.suites.get(suite_name, SuitePlan())
-    items, _ = suite.load(DatasetRegistry(cfg.datasets_path), plan,
-                          Filters(categories=metafunc.config.getoption("--ab-category")))
+    items, _ = suite.load(
+        DatasetRegistry(cfg.datasets_path),
+        plan,
+        Filters(categories=metafunc.config.getoption("--ab-category")),
+    )
     metafunc.parametrize("ab_item", items, ids=[i.id for i in items])
 
 
@@ -73,8 +78,11 @@ def ab_agent(request: pytest.FixtureRequest, ab_config) -> str:
 @pytest.fixture(scope="session")
 def run_case(ab_config):
     def _run(suite: str, target: str, case_id: str) -> CaseResult:
-        request = RunRequest(plan={suite: SuitePlan(targets=[target])}, filters=Filters(case_ids=[case_id]),
-                             label=f"pytest:{case_id}")
+        request = RunRequest(
+            plan={suite: SuitePlan(targets=[target])},
+            filters=Filters(case_ids=[case_id]),
+            label=f"pytest:{case_id}",
+        )
         record = asyncio.run(Runner(ab_config).run(request))
         assert record.results, f"no result for {case_id}"
         return record.results[0]

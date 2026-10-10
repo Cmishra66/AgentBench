@@ -1,8 +1,9 @@
 import { api, type RunDetail, type SuiteBlock } from "../api";
-import { BarCI, LineChart } from "../components/charts";
+import { BarCI } from "../components/charts";
+import { LoadResults } from "../components/LoadResults";
 import { Ledger, LedgerLegend } from "../components/Ledger";
 import { BreakdownTable, SuiteMetrics } from "../components/SuiteMetrics";
-import { ms, pct, sortSuites, suiteTitle, usd, when } from "../format";
+import { pct, sortSuites, suiteTitle, usd, when } from "../format";
 import { useAsync } from "../hooks";
 import { href, navigate } from "../router";
 
@@ -34,79 +35,6 @@ function bySuite(run: RunDetail): Record<string, Record<string, SuiteBlock>> {
   return out;
 }
 
-function LoadSection({ blocks }: { blocks: Record<string, SuiteBlock> }) {
-  return (
-    <>
-      {Object.entries(blocks).map(([t, b]) => (
-        <div key={t}>
-          <h3 className="mono">{t}</h3>
-          <div className="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Stage</th>
-                  <th className="num">Virtual users</th>
-                  <th className="num">Requests</th>
-                  <th className="num">Throughput</th>
-                  <th className="num">p50</th>
-                  <th className="num">p95</th>
-                  <th className="num">p99</th>
-                  <th className="num">Errors</th>
-                  <th className="num">Pass rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(b.stages ?? []).map((s: SuiteBlock) => (
-                  <tr key={s.stage}>
-                    <td>{s.stage}</td>
-                    <td className="num">{s.users}</td>
-                    <td className="num">{s.requests}</td>
-                    <td className="num">{s.throughput_rps} rps</td>
-                    <td className="num">{ms(s.latency_ms?.p50)}</td>
-                    <td className="num">{ms(s.latency_ms?.p95)}</td>
-                    <td className="num">{ms(s.latency_ms?.p99)}</td>
-                    <td className="num">{pct(s.error_rate)}</td>
-                    <td className="num">{pct(s.accuracy)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="note">
-            {b.total_requests} requests in {b.wall_time_s}s, {b.achieved_rps} rps on average and {b.peak_rps} at peak.
-            {b.accuracy_drop_under_load_pp != null && ` Pass rate fell ${b.accuracy_drop_under_load_pp}pp from the first stage to the worst stage.`}
-          </p>
-          <div className="charts-3">
-            <div>
-              <h3>Completed requests per second</h3>
-              <LineChart
-                title="Requests"
-                points={(b.timeline ?? []).map((p: SuiteBlock) => ({ x: `${p.t}s`, y: p.requests }))}
-                format={(v) => (Number.isInteger(v) ? String(v) : v.toFixed(1))}
-              />
-            </div>
-            <div>
-              <h3>p95 latency per second</h3>
-              <LineChart
-                title="p95"
-                points={(b.timeline ?? []).map((p: SuiteBlock) => ({ x: `${p.t}s`, y: p.p95_ms }))}
-                format={(v) => ms(v)}
-              />
-            </div>
-            <div>
-              <h3>Errors per second</h3>
-              <LineChart
-                title="Errors"
-                points={(b.timeline ?? []).map((p: SuiteBlock) => ({ x: `${p.t}s`, y: p.errors }))}
-                format={(v) => (Number.isInteger(v) ? String(v) : v.toFixed(1))}
-              />
-            </div>
-          </div>
-        </div>
-      ))}
-    </>
-  );
-}
 
 export default function Overview({ params }: { params: URLSearchParams }) {
   const runs = useAsync(() => api.runs(100), []);
@@ -185,7 +113,7 @@ export default function Overview({ params }: { params: URLSearchParams }) {
               </div>
               <p className="lede">{r.manifest?.suites?.[s]?.description}.</p>
               {s === "load" ? (
-                <LoadSection blocks={suites[s]} />
+                <LoadResults run={r} blocks={suites[s]} />
               ) : (
                 <>
                   <div style={{ maxWidth: 640 }}>

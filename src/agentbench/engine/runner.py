@@ -292,6 +292,11 @@ class Runner:
             "duration_s": round(finished - started, 2),
         }
         summary = build_summary(results, suites)
+        # Retain planned stages and actual elapsed time, including stages a capped run never reached.
+        for suite_name, suite_manifest in manifest_suites.items():
+            for target_id, extra in suite_manifest.get("runs", {}).items():
+                if target_id in summary["targets"]:
+                    summary["targets"][target_id][suite_name].update(extra)
         summary["totals"]["duration_s"] = round(finished - started, 2)
         return RunRecord(
             id=run_id,

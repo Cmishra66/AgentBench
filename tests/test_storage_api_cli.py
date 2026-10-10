@@ -77,9 +77,28 @@ async def test_api(cfg):
     assert client.get("/api/runs/nope").status_code == 404
     est = client.post("/api/estimate", json={"suites": ["core"], "targets": ["mock-strong"]}).json()
     assert est["rows"][0]["items"] == 160
+    load_est = client.post(
+        "/api/estimate",
+        json={
+            "suites": ["load"],
+            "targets": ["mock-perfect", "mock-strong"],
+            "options": {"load": {"max_requests": 10}},
+        },
+    ).json()
+    assert load_est["total_usd"] is None
+    assert [row["target"] for row in load_est["rows"]] == ["mock-perfect", "mock-strong"]
+    assert all(row["requests"] == "time-based, up to 10" for row in load_est["rows"])
     bad = client.post("/api/runs", json={"suites": ["core"], "targets": ["not-a-target"]})
     assert bad.status_code == 422
+    invalid_load = client.post(
+        "/api/runs",
+        json={"suites": ["load"], "targets": ["mock-perfect"], "options": {"load": {"max_inflight": 0}}},
+    )
+    assert invalid_load.status_code == 422
     job = client.post("/api/runs", json={"suites": ["core"], "targets": ["mock-perfect"], "limit": 3}).json()
+    assert job["targets"][0]["id"] == "mock-perfect"
+    assert job["targets"][0]["source"] == "simulation"
+    assert "api_key" not in json.dumps(job)
     for _ in range(100):
         state = client.get(f"/api/jobs/{job['id']}").json()
         if state["status"] != "running":

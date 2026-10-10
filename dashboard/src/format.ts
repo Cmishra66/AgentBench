@@ -8,6 +8,7 @@ export const ms = (v: number | null | undefined): string => {
 
 export const usd = (v: number | null | undefined): string => {
   if (v === null || v === undefined) return "–";
+  if (v > 0 && v < 0.0001) return `$${v.toFixed(v < 0.000001 ? 8 : 6)}`;
   return v < 1 ? `$${v.toFixed(4)}` : `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 

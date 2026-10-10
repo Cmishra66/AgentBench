@@ -142,6 +142,9 @@ export type TargetInfo = {
   id: string;
   kind: "model" | "agent";
   provider: string;
+  source?: "simulation" | "api";
+  max_concurrency?: number | null;
+  rate_limit_rps?: number | null;
   model: string;
   description: string;
   available: boolean;
@@ -162,6 +165,7 @@ export type AppConfig = {
   targets: TargetInfo[];
   suites: SuiteInfo[];
   datasets: { file: string; cases: number; categories: Record<string, number>; sha256: string }[];
+  load_profiles?: Record<string, { users: number; duration_s: number }[]>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   run: Record<string, any>;
 };
@@ -213,6 +217,8 @@ export type Job = {
   error: string | null;
   started: number;
   label: string;
+  suites?: string[];
+  targets?: Pick<TargetInfo, "id" | "model" | "provider" | "source" | "max_concurrency">[];
 };
 
 export type LaunchBody = {
@@ -283,7 +289,7 @@ export const api = {
   series: () => get<Record<string, string[]>>("/series"),
   launch: (body: LaunchBody) => post<Job>("/runs", body),
   estimate: (body: LaunchBody) =>
-    post<{ rows: { suite: string; target?: string; items: number; requests: number | string; tokens: number | null; usd: number | null }[]; total_usd: number; budget_usd: number | null }>(
+    post<{ rows: { suite: string; target?: string; items: number; requests: number | string; tokens: number | null; usd: number | null }[]; total_usd: number | null; budget_usd: number | null }>(
       "/estimate",
       body,
     ),

@@ -54,6 +54,10 @@ def build_plan(config: AgentBenchConfig, settings: RunSettings) -> dict[str, Sui
         for t in targets:
             config.target(t)
         options = {**base.options, **settings.suite_options.get(name, {})}
+        if name == "load":
+            from agentbench.suites.load import LoadSuite
+
+            LoadSuite.stages(options)
         plan[name] = SuitePlan(targets=list(targets), categories=list(base.categories), options=options)
     return plan
 
@@ -79,16 +83,20 @@ def estimate(config: AgentBenchConfig, plan: dict[str, SuitePlan], settings: Run
         suite = get_suite(name)
         items, _ = suite.load(registry, sp, filters)
         if name == "load":
-            rows.append(
-                {
-                    "suite": name,
-                    "items": len(items),
-                    "targets": sp.targets,
-                    "requests": "time-based",
-                    "tokens": None,
-                    "usd": None,
-                }
-            )
+            from agentbench.suites.load import LoadOptions
+
+            cap = LoadOptions.model_validate(sp.options).max_requests
+            for target in sp.targets:
+                rows.append(
+                    {
+                        "suite": name,
+                        "target": target,
+                        "items": len(items),
+                        "requests": f"time-based, up to {cap}",
+                        "tokens": None,
+                        "usd": None,
+                    }
+                )
             continue
         prompt_tokens = 0
         for it in items:
@@ -118,7 +126,7 @@ def estimate(config: AgentBenchConfig, plan: dict[str, SuitePlan], settings: Run
             )
     return {
         "rows": rows,
-        "total_usd": round(sum(r["usd"] or 0 for r in rows), 4),
+        "total_usd": None if any(r["usd"] is None for r in rows) else round(sum(r["usd"] for r in rows), 4),
         "budget_usd": opts.budget.max_usd,
     }
 

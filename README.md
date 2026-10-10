@@ -37,7 +37,7 @@ introduced a shared response cache leaks one user's invoice to another.
 | `injection` | Resistance to prompt injection hidden in untrusted content: secret exfiltration, instruction override, hidden comments, URL exfiltration, fake system messages | 20 |
 | `tool_use` | Tool selection, arguments, permissions, recovery from 429/503/timeouts, and **write idempotency** — a side-effect ledger proves whether a retry sent the email twice | 17 |
 | `isolation` | Context bleeding across users, sessions, caches, summaries, tool ACLs and concurrent requests, using seeded synthetic secrets and explicit access rules | 12 |
-| `load` | Latency percentiles, throughput, errors and **pass rate under load** across steady, ramp and spike stages | time-based |
+| `load` | Latency percentiles, client queue time, throughput, errors and **pass rate under load** across smoke, steady, ramp, spike, stress, soak or custom stages | time-based |
 
 The isolation suite catches each bug seeded into the reference agent, and the test suite asserts it:
 
@@ -83,11 +83,60 @@ Targets without keys are skipped, never fatal. Any OpenAI-compatible server (Oll
 works through the `local` target. To test your own agent, implement the small
 [agent protocol](docs/agent-protocol.md) and set `AGENT_URL`.
 
+### OpenRouter
+
+The `openrouter` target uses the existing OpenAI-compatible adapter with
+[OpenRouter's API](https://openrouter.ai/docs/quickstart). Copy `.env.example` to `.env` if you
+haven't already, then set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` to an exact id from
+[the model catalog](https://openrouter.ai/models). Set `OPENROUTER_INPUT_PER_MTOK` and
+`OPENROUTER_OUTPUT_PER_MTOK` to that model's USD prices per million tokens; otherwise tracked
+cost is zero and the dollar budget cannot limit spend.
+
+```bash
+agentbench targets
+agentbench run --suite core --target openrouter --limit 5 --concurrency 1 --dry-run
+agentbench run --suite core --target openrouter --limit 5 --concurrency 1 --label openrouter-smoke
+```
+
+Restart `agentbench serve` after editing `.env`, then select `openrouter` in the Test lab.
+These runs use real model responses against the bundled synthetic datasets. For `tool_use`,
+select a model that supports tool calling. To test session isolation, configure a reference-agent
+target with `agent.model_target: openrouter` or connect your own stateful HTTP agent.
+
+For a Nex/Nemotron comparison, keep Nex in `OPENROUTER_MODEL` and put Nemotron in
+`OPENROUTER_NEMOTRON_MODEL`. Set the second model's separate pricing variables from `.env.example`.
+Both targets share `OPENROUTER_API_KEY`; repeating `OPENROUTER_MODEL` does not create another target.
+Restart the server, select **Load and performance → Compare API models**, and check that the selected
+models are Nex and Nemotron. The `:free` Nemotron variant has zero token prices and
+[free-endpoint rate limits](https://openrouter.ai/docs/api/reference/limits).
+
+```bash
+agentbench load --target openrouter --target nemotron-ultra --profile smoke \
+  --max-inflight 2 --max-requests 10 --max-usd 0.10
+```
+
+### Compare load across targets
+
+In the Test lab, choose **Load and performance**, click **Compare API and mock**, and choose a profile or edit the
+stages. Target names and **API / Simulated** labels are shown before launch and on the running job.
+The overview and HTML report compare latency, client queue time, observed concurrency, throughput,
+correct answers per second and stage objectives. Start with a short profile, then use stress or soak
+for longer tests. Mock results are simulations; compare two real API targets for real-model claims.
+
+```bash
+agentbench load --target openrouter --target mock-strong --profile steady \
+  --users 4 --duration 15 --max-inflight 4 --max-requests 100 --max-usd 0.10
+agentbench load --target openrouter --profile stress --max-inflight 16 \
+  --max-requests 500 --latency-slo 5 --min-pass-rate 0.95 --max-error-rate 0.01
+```
+
+See [docs/metrics.md](docs/metrics.md#load-tests-and-comparisons) for metric definitions and sample limits.
+
 ## Command line
 
 ```text
 agentbench run        Run suites (--suite, --target, --category, --case, --repeats, --baseline, --dry-run)
-agentbench load       Load test: --profile smoke|steady|ramp|spike, --users, --pad-tokens
+agentbench load       Load test: --profile smoke|steady|ramp|spike|stress|soak, --max-inflight, --max-requests
 agentbench compare    Gate a candidate against a baseline (exit 1 when blocked)
 agentbench report     Self-contained HTML report for a run
 agentbench repro      Rerun one stored case with the original seed
@@ -123,7 +172,7 @@ make baseline   # refresh baselines/main.json after an intentional change
 ## Testing the platform itself
 
 ```bash
-make test        # 67 unit and integration tests, offline, ~10s
+make test        # Python unit and integration tests, offline
 make benchmark   # every benchmark case as a pytest test with JUnit output
 make e2e         # Playwright: dashboard flows, REST API, agent protocol
 ```

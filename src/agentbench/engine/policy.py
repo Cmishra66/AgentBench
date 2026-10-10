@@ -46,6 +46,10 @@ class Meter:
     cached_calls: int = 0
     models: set[str] = field(default_factory=set)
     errors: list[str] = field(default_factory=list)
+    attempt_error_counts: dict[str, int] = field(default_factory=dict)
+    queue_wait_ms: float = 0.0
+    api_latency_ms: list[float] = field(default_factory=list)
+    peak_api_concurrency: int = 0
     judge_input_tokens: int = 0
     judge_output_tokens: int = 0
     judge_cost_usd: float = 0.0
@@ -231,6 +235,7 @@ class ManagedProvider:
         self.semaphore = asyncio.Semaphore(target.max_concurrency) if target.max_concurrency else None
         self.limiter = TokenBucket(target.rate_limit_rps) if target.rate_limit_rps else None
         self.reported_models: set[str] = set()
+        self.inflight = 0
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         meter = current_meter()
@@ -278,6 +283,7 @@ class ManagedProvider:
                     self.budget.record(Usage(), 0.0)
                     if meter and self.role == "target":
                         meter.errors.append(f"attempt {attempt}: {err.kind} {err.status or ''}".strip())
+                        meter.attempt_error_counts[err.kind] = meter.attempt_error_counts.get(err.kind, 0) + 1
                     if err.retryable and attempt <= self.policy.max_retries:
                         delay = self.policy.delay(attempt, err)
                         span.event("retry_scheduled", delay_s=round(delay, 3))
@@ -318,16 +324,27 @@ class ManagedProvider:
                 return resp
 
     async def _call(self, request: ModelRequest) -> ModelResponse:
+        queued_at = time.perf_counter()
         if self.limiter:
             await self.limiter.acquire()
         timeout = self.target.timeout_s or self.policy.timeout_s
 
         async def run() -> ModelResponse:
             start = time.perf_counter()
-            resp = await self.provider.complete(request)
-            if not resp.latency_ms:
-                resp.latency_ms = (time.perf_counter() - start) * 1000
-            return resp
+            meter = current_meter() if self.role == "target" else None
+            self.inflight += 1
+            if meter:
+                meter.queue_wait_ms += (start - queued_at) * 1000
+                meter.peak_api_concurrency = max(meter.peak_api_concurrency, self.inflight)
+            try:
+                resp = await self.provider.complete(request)
+                if not resp.latency_ms:
+                    resp.latency_ms = (time.perf_counter() - start) * 1000
+                return resp
+            finally:
+                self.inflight -= 1
+                if meter:
+                    meter.api_latency_ms.append((time.perf_counter() - start) * 1000)
 
         try:
             if self.semaphore:

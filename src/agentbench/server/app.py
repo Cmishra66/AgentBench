@@ -20,6 +20,7 @@ from agentbench.config import AgentBenchConfig
 from agentbench.datasets.loader import DatasetRegistry
 from agentbench.reporting.html import write_report
 from agentbench.suites import available_suites, get_suite
+from agentbench.suites.load import PROFILES
 
 DASHBOARD_DIST = Path(
     os.environ.get("AGENTBENCH_DASHBOARD_DIR") or Path(__file__).resolve().parents[3] / "dashboard" / "dist"
@@ -51,6 +52,18 @@ def create_app(cfg: AgentBenchConfig, dashboard_dir: Path | None = None) -> Fast
     jobs: dict[str, dict[str, Any]] = {}
     tasks: set[asyncio.Task] = set()
 
+    def target_info(target_id: str) -> dict[str, Any]:
+        target = cfg.target(target_id)
+        model = cfg.target(target.agent.model_target) if target.agent else target
+        return {
+            "id": target.id,
+            "provider": target.provider,
+            "model": model.model,
+            "source": "simulation" if model.provider == "mock" else "api",
+            "max_concurrency": model.max_concurrency,
+            "rate_limit_rps": model.rate_limit_rps,
+        }
+
     def resolve(ref: str) -> str:
         try:
             return store.resolve(ref)
@@ -68,6 +81,7 @@ def create_app(cfg: AgentBenchConfig, dashboard_dir: Path | None = None) -> Fast
             ok, why = t.availability()
             targets.append(
                 {
+                    **target_info(t.id),
                     "id": t.id,
                     "kind": "agent" if t.is_agent else "model",
                     "provider": t.provider,
@@ -99,6 +113,7 @@ def create_app(cfg: AgentBenchConfig, dashboard_dir: Path | None = None) -> Fast
             "datasets": datasets,
             "run": cfg.run.model_dump(),
             "judge": cfg.judge.model_dump(),
+            "load_profiles": PROFILES,
         }
 
     @app.get("/api/runs")
@@ -231,7 +246,7 @@ def create_app(cfg: AgentBenchConfig, dashboard_dir: Path | None = None) -> Fast
     async def launch(body: LaunchRun) -> dict[str, Any]:
         settings = settings_from(body)
         try:
-            service.build_plan(cfg, settings)
+            plan = service.build_plan(cfg, settings)
         except (KeyError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
         job_id = secrets.token_hex(6)
@@ -244,6 +259,10 @@ def create_app(cfg: AgentBenchConfig, dashboard_dir: Path | None = None) -> Fast
             "error": None,
             "started": time.time(),
             "label": settings.label,
+            "suites": list(plan),
+            "targets": [
+                target_info(tid) for tid in sorted({tid for suite in plan.values() for tid in suite.targets})
+            ],
         }
 
         def progress(done: int, total: int, _r: Any) -> None:

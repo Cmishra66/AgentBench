@@ -1,12 +1,13 @@
 """Adapter contract tests: request mapping and response parsing against recorded API shapes."""
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
 
 from agentbench.agents.server import create_agent_app
-from agentbench.config import TargetConfig
+from agentbench.config import TargetConfig, load_config
 from agentbench.core.types import Message, ModelRequest, ProviderError, ToolCall, ToolSpec
 from agentbench.providers.anthropic import AnthropicProvider
 from agentbench.providers.gemini import GeminiProvider
@@ -99,6 +100,33 @@ async def test_openai_mapping(monkeypatch):
     assert body["max_completion_tokens"] == 99 and body["temperature"] == 0.0
     assert resp.tool_calls[0].arguments == {"invoice_id": "INV-2"}
     assert (resp.usage.input_tokens, resp.usage.output_tokens, resp.model) == (11, 7, "gpt-test-2026")
+
+
+async def test_openrouter_targets_keep_model_selection_and_prices_separate(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-shared-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "nex-agi/nex-n2.5-mini")
+    monkeypatch.setenv("OPENROUTER_INPUT_PER_MTOK", "0.025")
+    monkeypatch.setenv("OPENROUTER_OUTPUT_PER_MTOK", "0.10")
+    monkeypatch.setenv("OPENROUTER_NEMOTRON_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+    monkeypatch.setenv("OPENROUTER_NEMOTRON_INPUT_PER_MTOK", "0")
+    monkeypatch.setenv("OPENROUTER_NEMOTRON_OUTPUT_PER_MTOK", "0")
+    config = load_config(Path(__file__).resolve().parents[1] / "configs" / "agentbench.yaml")
+    captured = []
+    for target_id in ("openrouter", "nemotron-ultra"):
+        target = config.target(target_id)
+        assert target.availability()[0]
+        seen, transport = recorder({"model": target.model, "choices": [{"message": {"content": "ok"}}]})
+        provider = OpenAIProvider(target, transport=transport)
+        await provider.complete(ModelRequest(messages=[Message("user", "smoke test")]))
+        captured.append(seen)
+        await provider.aclose()
+    assert [request["body"]["model"] for request in captured] == [
+        "nex-agi/nex-n2.5-mini",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+    ]
+    assert all(request["headers"]["authorization"] == "Bearer test-shared-key" for request in captured)
+    assert config.target("openrouter").pricing.cost(100, 100) > 0
+    assert config.target("nemotron-ultra").pricing.cost(100, 100) == 0
 
 
 async def test_anthropic_mapping(monkeypatch):

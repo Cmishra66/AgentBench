@@ -257,10 +257,12 @@ def run(
                 usd(r["usd"]),
             )
         console.print(table)
-        console.print(
-            f"Estimated spend {usd(est['total_usd'])} (budget {usd(est['budget_usd'])}). "
-            "Mock targets use illustrative prices."
+        spend_note = (
+            "Load-test cost depends on completed requests and token usage."
+            if est["total_usd"] is None
+            else f"Estimated spend {usd(est['total_usd'])}."
         )
+        console.print(f"{spend_note} Budget {usd(est['budget_usd'])}. Mock targets use illustrative prices.")
         return
     db = service.open_store(cfg) if store else None
     record, out_dir = _progress_runner(lambda cb: service.execute_run(cfg, settings, cb, db))
@@ -285,9 +287,17 @@ def run(
 def load(
     config: ConfigOpt = None,
     target: Annotated[Optional[list[str]], typer.Option("--target", "-t")] = None,
-    profile: Annotated[str, typer.Option(help="smoke | steady | ramp | spike")] = "steady",
-    users: Annotated[Optional[int], typer.Option(help="Virtual users (steady/smoke)")] = None,
-    duration: Annotated[Optional[float], typer.Option(help="Seconds (steady/smoke)")] = None,
+    profile: Annotated[str, typer.Option(help="smoke | steady | ramp | spike | stress | soak")] = "steady",
+    users: Annotated[Optional[int], typer.Option(help="Virtual users (single-stage profiles)")] = None,
+    duration: Annotated[Optional[float], typer.Option(help="Seconds (single-stage profiles)")] = None,
+    max_requests: Annotated[int, typer.Option(help="Maximum logical requests per target")] = 20_000,
+    max_inflight: Annotated[
+        Optional[int], typer.Option(help="Override each target's in-flight call limit")
+    ] = None,
+    latency_slo: Annotated[float, typer.Option(help="p95 latency objective, seconds")] = 5.0,
+    min_pass_rate: Annotated[float, typer.Option(help="Minimum pass rate, between 0 and 1")] = 0.95,
+    max_error_rate: Annotated[float, typer.Option(help="Maximum API error rate, between 0 and 1")] = 0.01,
+    max_usd: Annotated[Optional[float], typer.Option(help="Run-wide tracked spend limit")] = None,
     pad_tokens: Annotated[
         int, typer.Option(help="Pad prompts with N filler tokens (long-context stress)")
     ] = 0,
@@ -295,28 +305,52 @@ def load(
     category: Annotated[Optional[list[str]], typer.Option("--category")] = None,
     label: Annotated[str, typer.Option()] = "",
 ) -> None:
-    """Run a load test (steady, ramp or spike) and grade responses under load."""
+    """Run the same load profile for selected targets and grade responses under load."""
     from agentbench import service
 
     cfg = _cfg(config)
     opts: dict[str, Any] = {"profile": profile, "pad_context_tokens": pad_tokens, "think_time_s": think_time}
-    if users:
+    opts.update(
+        max_requests=max_requests,
+        max_inflight=max_inflight,
+        latency_slo_ms=latency_slo * 1000,
+        min_pass_rate=min_pass_rate,
+        max_error_rate=max_error_rate,
+    )
+    if users is not None:
         opts["users"] = users
-    if duration:
+    if duration is not None:
         opts["duration_s"] = duration
     settings = service.RunSettings(
         suites=["load"],
         targets=target or [],
         categories=category or [],
         label=label or f"load:{profile}",
+        max_usd=max_usd,
         suite_options={"load": opts},
     )
+    try:
+        service.build_plan(cfg, settings)
+    except (KeyError, ValueError) as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
     db = service.open_store(cfg)
     record, out_dir = _progress_runner(lambda cb: service.execute_run(cfg, settings, cb, db))
     for tid, suites_ in record.summary["targets"].items():
         block = suites_.get("load", {})
         table = Table(title=f"load: {tid}", title_justify="left", header_style="bold")
-        for col in ("Stage", "Users", "Requests", "RPS", "p50", "p95", "p99", "Errors", "Pass rate"):
+        for col in (
+            "Stage",
+            "Users",
+            "Requests",
+            "RPS",
+            "p95",
+            "Queue p95",
+            "Peak calls",
+            "Errors",
+            "Pass rate",
+            "SLO",
+        ):
             table.add_column(col, justify="right")
         for st in block.get("stages", []):
             table.add_row(
@@ -324,16 +358,19 @@ def load(
                 str(st["users"]),
                 str(st["requests"]),
                 str(st["throughput_rps"]),
-                ms(st["latency_ms"]["p50"]),
                 ms(st["latency_ms"]["p95"]),
-                ms(st["latency_ms"]["p99"]),
+                ms(st["queue_wait_ms"]["p95"]),
+                str(st["peak_api_concurrency"]),
                 pct(st["error_rate"]),
                 pct(st["accuracy"]),
+                st["slo_verdict"],
             )
         console.print(table)
         console.print(
             f"{block.get('total_requests')} requests, {block.get('achieved_rps')} rps average, "
             f"pass-rate drop under load {block.get('accuracy_drop_under_load_pp')}pp"
+            f", correct answers within latency target: {block.get('slo_goodput_rps')} rps"
+            f", stopped: {block.get('stop_reason')}, objectives: {block.get('slo_verdict')}"
         )
     if out_dir:
         console.print(f"Report: {out_dir / 'report.html'}")

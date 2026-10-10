@@ -55,6 +55,30 @@ targets:
 
   # ---------------------------------------------------------------- real providers (need keys)
   # Set the model id and fill pricing from the provider's pricing page; nothing is hardcoded.
+  - id: openrouter
+    provider: openai_compatible
+    model: ${OPENROUTER_MODEL}
+    description: Primary real model accessed through OpenRouter
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    requires_env: [OPENROUTER_MODEL]
+    params: {temperature: 0, max_output_tokens: 1024, max_tokens_param: max_tokens}
+    pricing:
+      input_per_mtok: ${OPENROUTER_INPUT_PER_MTOK:-0}
+      output_per_mtok: ${OPENROUTER_OUTPUT_PER_MTOK:-0}
+    max_concurrency: 4
+  - id: nemotron-ultra
+    provider: openai_compatible
+    model: ${OPENROUTER_NEMOTRON_MODEL}
+    description: Nemotron model accessed through OpenRouter
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    requires_env: [OPENROUTER_NEMOTRON_MODEL]
+    params: {temperature: 0, max_output_tokens: 1024, max_tokens_param: max_tokens}
+    pricing:
+      input_per_mtok: ${OPENROUTER_NEMOTRON_INPUT_PER_MTOK:-0}
+      output_per_mtok: ${OPENROUTER_NEMOTRON_OUTPUT_PER_MTOK:-0}
+    max_concurrency: 4
   - id: openai
     provider: openai
     model: ${OPENAI_MODEL}

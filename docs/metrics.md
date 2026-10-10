@@ -88,3 +88,41 @@ normalising case and punctuation.
   cheap-but-wrong is not a win.
 * The **load suite** reports throughput, latency percentiles, errors and **pass rate per stage**, plus
   `accuracy_drop_under_load_pp` (first stage versus the worst stage).
+
+## Load tests and comparisons
+
+Select multiple targets to run the same stages separately. Each virtual user sends its next request
+after the previous one completes (closed-loop traffic). The prompt cycle starts at the same case for
+every target, but time-based runs can produce different sample counts. Load comparisons show measured
+values side by side; they do not apply paired accuracy significance tests to unequal load samples.
+Mock targets simulate response quality, latency and failures, so their numbers are useful for testing
+the platform rather than ranking real models.
+
+Profiles include smoke, steady, ramp, spike, stress (2 → 8 → 16 → 32 → 64 users) and soak (8 users for
+five minutes). The Test lab supports editable stages, a request cap per target, think time, extra
+context, and an explicit simultaneous-call limit. A target's configured limit remains in force unless
+overridden; virtual users beyond that limit queue locally. For reference agents, underlying model
+limits can further constrain traffic. Load tests of model targets bypass the response cache.
+
+| Measure | Definition |
+|---|---|
+| End-to-end latency | Time from the logical request's start to completion, including queueing, retries and backoff. For load tests this includes failed API requests. |
+| Provider round-trip | Duration of each provider attempt, including failed attempts; excludes time waiting for local concurrency or rate limits. |
+| Client queue | Cumulative time each logical request waits for concurrency or rate limits across its attempts. |
+| Observed peak calls | Maximum simultaneous provider attempts observed. Unavailable for HTTP agents without model-call instrumentation. |
+| Throughput | Completed logical requests divided by actual elapsed time, including time to drain in-flight requests. |
+| Goodput | Correct answers divided by elapsed time. |
+| Goodput within latency target | Correct answers that also finish within the configured latency target, divided by elapsed time. |
+| Failed attempts | Error counts by kind, including rate limits and timeouts recovered by a retry. Final API errors are reported separately. |
+| p95 slowdown | Worst observed stage p95 divided by first-stage p95. |
+
+Each stage has objectives: p95 must be within the latency target, pass rate above its minimum, and
+API error rate below its maximum. Defaults are 5 seconds, 95%, 1%, and at least 20 samples per stage.
+Small samples are marked `insufficient_samples`; stages not reached are marked `not_run`. The run
+only meets all objectives when every planned stage meets them. These thresholds are configurable
+objectives, not a claim of statistical certainty. p99 estimates with fewer than 100 samples are flagged.
+
+Planned and observed durations are stored separately. A request or budget cap may end a profile early;
+remaining stages are retained in the report. Time-based requests already in flight drain before the
+next stage starts. Closed-loop results describe this workload, client limits and provider routing;
+they do not establish capacity at a fixed independent arrival rate. Costs use configured token prices.

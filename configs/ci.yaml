@@ -1,0 +1,23 @@
+# CI configuration: inherits every target from agentbench.yaml and runs a focused plan that is
+# cheap enough for every pull request. The regression gate compares this run with
+# baselines/main.json (refresh it with `make baseline` after an intentional change).
+#
+# Real providers join automatically when their API keys are present as CI secrets: add them to
+# the targets lists below (e.g. `targets: [mock-strong, anthropic]`) and fill in pricing.
+
+extends: agentbench.yaml
+
+run:
+  concurrency: 8
+  budget:
+    max_usd: 2.00
+
+suites:
+  core:
+    targets: [mock-strong]
+  injection:
+    targets: [mock-strong]
+  tool_use:
+    targets: [mock-strong, agent-secure]
+  isolation:
+    targets: [agent-secure]

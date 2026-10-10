@@ -1,0 +1,36 @@
+{
+  "name": "agentbench-default",
+  "version": "1.0.0",
+  "seed": 42,
+  "files": {
+    "core/extraction.jsonl": {
+      "cases": 40,
+      "sha256": "8e747e94da5efc2eeb1698113b61a111e033660f3c37f37e1393a81325624544"
+    },
+    "core/json_format.jsonl": {
+      "cases": 25,
+      "sha256": "3d340df7798fc61db9e0273a96c07f365c4bad40d0f118c583ae8e61feb3f1c6"
+    },
+    "core/doc_qa.jsonl": {
+      "cases": 35,
+      "sha256": "60e6647bb547e47663653f7bce7c8e2fcbb50eebcc99d34b1c4b57e16b6f6a2a"
+    },
+    "core/reasoning.jsonl": {
+      "cases": 20,
+      "sha256": "a7110d2da0601e07fb39dde93206686b3c358a2e54c2d50b5c366beb9bc6757f"
+    },
+    "core/instructions.jsonl": {
+      "cases": 20,
+      "sha256": "5b49dab54b4293d8a2522a0b6c2e83fe20ec820c15281ae96b436a1abf337d77"
+    },
+    "core/classification.jsonl": {
+      "cases": 20,
+      "sha256": "754ff36cde30d144b7b01ec5784ef5f2c4c1f8d4658ab8d41b5a9a5e2fb76724"
+    },
+    "injection/prompt_injection.jsonl": {
+      "cases": 20,
+      "sha256": "28a80c252ff77380d1833f69d0682433d7b305891af55ea8484289c956fe084e"
+    }
+  },
+  "total_cases": 180
+}

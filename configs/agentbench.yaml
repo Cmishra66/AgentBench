@@ -1,0 +1,143 @@
+# AgentBench configuration.
+# Paths are relative to the repository root. ${VAR} and ${VAR:-default} read environment variables.
+
+project: agentbench-demo
+datasets_dir: datasets
+runs_dir: runs
+database_url: sqlite:///agentbench.db     # override with AGENTBENCH_DATABASE_URL (e.g. PostgreSQL)
+gates: configs/gates.yaml
+
+run:
+  seed: 42
+  repeats: 1
+  concurrency: 16
+  timeout_s: 30
+  max_retries: 3
+  backoff_base_s: 0.25
+  backoff_max_s: 4
+  cache: false
+  budget:
+    max_usd: 5.00          # hard stop for a single run
+    max_tokens: 5000000
+    max_requests: 50000
+
+# A separate model grades semantic quality. Its verdicts never gate a case on their own.
+judge:
+  target: mock-judge
+
+targets:
+  # ---------------------------------------------------------------- offline mock models (no keys)
+  - id: mock-strong
+    provider: mock
+    model: mock-strong
+    description: Simulated high-quality model
+    pricing: {input_per_mtok: 3.0, output_per_mtok: 15.0}
+  - id: mock-fast
+    provider: mock
+    model: mock-fast
+    description: Simulated cheap, fast, less careful model
+    pricing: {input_per_mtok: 0.25, output_per_mtok: 1.25}
+  - id: mock-flaky
+    provider: mock
+    model: mock-flaky
+    description: Simulated model behind an unreliable gateway (429s, 503s, hangs, small capacity)
+    timeout_s: 2.5
+    pricing: {input_per_mtok: 1.0, output_per_mtok: 4.0}
+  - id: mock-strong-v2
+    provider: mock
+    model: mock-strong-v2
+    description: A "new release" of mock-strong with regressions (used to demo the CI gate)
+    pricing: {input_per_mtok: 3.0, output_per_mtok: 15.0}
+  - id: mock-judge
+    provider: mock
+    model: mock-judge
+    description: Heuristic stand-in for an LLM judge
+
+  # ---------------------------------------------------------------- real providers (need keys)
+  # Set the model id and fill pricing from the provider's pricing page; nothing is hardcoded.
+  - id: openai
+    provider: openai
+    model: ${OPENAI_MODEL}
+    api_key_env: OPENAI_API_KEY
+    params: {temperature: 0, max_output_tokens: 1024}
+    pricing: {input_per_mtok: 0.0, output_per_mtok: 0.0}
+    max_concurrency: 8
+  - id: anthropic
+    provider: anthropic
+    model: ${ANTHROPIC_MODEL}
+    api_key_env: ANTHROPIC_API_KEY
+    params: {temperature: 0, max_output_tokens: 1024}
+    pricing: {input_per_mtok: 0.0, output_per_mtok: 0.0}
+    max_concurrency: 8
+  - id: gemini
+    provider: gemini
+    model: ${GEMINI_MODEL}
+    api_key_env: GEMINI_API_KEY
+    params: {temperature: 0, max_output_tokens: 1024}
+    pricing: {input_per_mtok: 0.0, output_per_mtok: 0.0}
+    max_concurrency: 8
+  # Any OpenAI-compatible server, e.g. a local Ollama: OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
+  - id: local
+    provider: openai_compatible
+    model: ${LOCAL_MODEL}
+    base_url: ${OPENAI_COMPAT_BASE_URL:-http://localhost:11434/v1}
+    requires_env: [LOCAL_MODEL]
+    params: {temperature: 0, max_output_tokens: 1024, max_tokens_param: max_tokens}
+
+  # ---------------------------------------------------------------- agents under test
+  - id: agent-secure
+    provider: reference_agent
+    description: Reference agent with correct isolation
+    agent: {preset: secure, model_target: mock-strong}
+  - id: agent-leaky-memory
+    provider: reference_agent
+    description: Conversation memory shared across users
+    agent: {preset: leaky-memory, model_target: mock-strong}
+  - id: agent-shared-cache
+    provider: reference_agent
+    description: Response cache keyed by message text only
+    agent: {preset: shared-cache, model_target: mock-strong}
+  - id: agent-no-tool-acl
+    provider: reference_agent
+    description: Invoice tools skip ownership checks
+    agent: {preset: no-tool-acl, model_target: mock-strong}
+  - id: agent-race
+    provider: reference_agent
+    description: Request state stored on the shared agent instance
+    agent: {preset: race-condition, model_target: mock-strong}
+  - id: agent-summary-bleed
+    provider: reference_agent
+    description: Summaries stored globally
+    agent: {preset: summary-bleed, model_target: mock-strong}
+  - id: agent-user-memory
+    provider: reference_agent
+    description: Memory shared across one user's sessions
+    agent: {preset: user-memory, model_target: mock-strong}
+  - id: agent-naive-retries
+    provider: reference_agent
+    description: Agent code retries failed writes without idempotency keys
+    agent: {preset: naive-retries, model_target: mock-strong}
+  # Your own agent over HTTP (see docs/agent-protocol.md)
+  - id: my-agent
+    provider: http_agent
+    base_url: ${AGENT_URL:-http://localhost:8080}
+    requires_env: [AGENT_URL]
+
+# Default plan for `agentbench run`. Override with --suite / --target.
+suites:
+  core:
+    targets: [mock-strong, mock-fast, mock-flaky]
+  injection:
+    targets: [mock-strong, mock-fast]
+  tool_use:
+    targets: [mock-strong, mock-fast, agent-secure, agent-naive-retries]
+  isolation:
+    targets: [agent-secure, agent-leaky-memory, agent-shared-cache, agent-no-tool-acl, agent-race,
+              agent-summary-bleed, agent-user-memory]
+    options:
+      same_user_cross_session: forbidden
+  load:
+    targets: [mock-strong]
+    categories: [classification, extraction]
+    options:
+      profile: spike

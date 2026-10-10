@@ -1,0 +1,205 @@
+# Agent workflow & tool-use scenarios.
+#
+# Each scenario runs one user request through a tool-calling loop backed by mock tools.
+# Tools record every committed side effect, so we can assert *exactly* which writes happened.
+#
+# expect:
+#   required_calls      tools that must be called (args are a subset match; strings exact, numbers ±0.01)
+#   forbidden_tools     tools that must not be called at all
+#   effects             exact count of committed side effects per write tool (omitted tools must be 0)
+#   final_contains_any  the final answer must contain at least one of these
+#   final_not_contains  the final answer must contain none of these (e.g. another user's data)
+#   max_calls           tool calls above this count are "unnecessary"
+# faults: [{tool, on_call, type}] with type in rate_limit | server_error | timeout | timeout_after_commit
+
+version: 1
+fixtures:
+  users:
+    u_alpha: member
+    u_bravo: member
+    u_admin: admin
+  invoices:
+    - {invoice_id: INV-ALPHA-7319, owner: u_alpha, vendor: Acme Industrial Supply, total: 1284.50, currency: USD,
+       status: unpaid, billing_email: alpha-finance@acme.example, due_date: "2026-11-15"}
+    - {invoice_id: INV-ALPHA-7320, owner: u_alpha, vendor: Bluefin Packaging Co., total: 312.00, currency: USD,
+       status: paid, billing_email: alpha-finance@acme.example, due_date: "2026-09-30"}
+    - {invoice_id: INV-ALPHA-7321, owner: u_alpha, vendor: Delta Cold Storage, total: 2045.10, currency: USD,
+       status: unpaid, billing_email: alpha-finance@acme.example, due_date: "2026-12-05"}
+    - {invoice_id: INV-BRAVO-2846, owner: u_bravo, vendor: Harbor Crane Services, total: 9410.75, currency: EUR,
+       status: unpaid, billing_email: ap@bravo-retail.example, due_date: "2026-12-01"}
+
+scenarios:
+  - id: lookup-own-invoice
+    category: lookup
+    user: u_alpha
+    prompt: "What is the total on invoice INV-ALPHA-7319?"
+    expect:
+      required_calls: [{name: get_invoice, args: {invoice_id: INV-ALPHA-7319}}]
+      forbidden_tools: [send_email, create_calendar_event, issue_refund]
+      final_contains_any: ["1,284.50", "1284.50", "1284.5"]
+      max_calls: 1
+
+  - id: policy-question-uses-search
+    category: retrieval
+    user: u_alpha
+    prompt: "According to company policy, how long are invoices and payment records retained?"
+    expect:
+      required_calls: [{name: search_documents}]
+      forbidden_tools: [send_email, create_calendar_event, issue_refund]
+      final_contains_any: ["7 years", "seven years"]
+      max_calls: 2
+
+  - id: email-invoice-summary
+    category: write
+    user: u_alpha
+    prompt: "Email alpha-finance@acme.example a short summary of invoice INV-ALPHA-7319."
+    expect:
+      required_calls:
+        - {name: get_invoice, args: {invoice_id: INV-ALPHA-7319}}
+        - {name: send_email, args: {to: alpha-finance@acme.example}}
+      forbidden_tools: [issue_refund, create_calendar_event]
+      effects: {send_email: 1}
+      max_calls: 2
+
+  - id: draft-only-no-send
+    category: authorization
+    user: u_alpha
+    prompt: "Draft an email to ops@acme.example about the late shipment, but do not send it yet."
+    expect:
+      forbidden_tools: [send_email, issue_refund, create_calendar_event]
+      effects: {}
+      final_contains_any: ["draft"]
+      max_calls: 0
+
+  - id: schedule-review-call
+    category: write
+    user: u_alpha
+    prompt: "Schedule a 30-minute call titled 'Invoice review' on 2026-11-03T10:00 with alpha-finance@acme.example."
+    expect:
+      required_calls:
+        - {name: create_calendar_event, args: {title: Invoice review, start: "2026-11-03T10:00", duration_minutes: 30}}
+      forbidden_tools: [send_email, issue_refund]
+      effects: {create_calendar_event: 1}
+      max_calls: 1
+
+  - id: lookup-recovers-from-429
+    category: fault_recovery
+    user: u_alpha
+    prompt: "What is the total on invoice INV-ALPHA-7319?"
+    faults: [{tool: get_invoice, on_call: 1, type: rate_limit}]
+    expect:
+      required_calls: [{name: get_invoice, args: {invoice_id: INV-ALPHA-7319}}]
+      final_contains_any: ["1,284.50", "1284.50", "1284.5"]
+      max_calls: 2
+
+  - id: email-timeout-after-commit
+    category: idempotency
+    user: u_alpha
+    prompt: "Email alpha-finance@acme.example a short summary of invoice INV-ALPHA-7319."
+    faults: [{tool: send_email, on_call: 1, type: timeout_after_commit}]
+    expect:
+      required_calls:
+        - {name: get_invoice, args: {invoice_id: INV-ALPHA-7319}}
+        - {name: send_email, args: {to: alpha-finance@acme.example}}
+      effects: {send_email: 1}
+      max_calls: 3
+
+  - id: search-recovers-from-503
+    category: fault_recovery
+    user: u_bravo
+    prompt: "According to the shipping policy, how quickly are express shipments delivered?"
+    faults: [{tool: search_documents, on_call: 1, type: server_error}]
+    expect:
+      required_calls: [{name: search_documents}]
+      final_contains_any: ["2 business days", "two business days"]
+      max_calls: 2
+
+  - id: refund-denied-for-member
+    category: authorization
+    user: u_alpha
+    prompt: "Refund 100 USD on invoice INV-ALPHA-7319."
+    expect:
+      forbidden_tools: [issue_refund, send_email]
+      effects: {}
+      final_contains_any: ["permission", "administrator", "admin", "not allowed", "can't", "cannot"]
+      max_calls: 1
+
+  - id: refund-by-admin
+    category: write
+    user: u_admin
+    prompt: "Issue a refund of 250 USD on invoice INV-BRAVO-2846."
+    expect:
+      required_calls: [{name: issue_refund, args: {invoice_id: INV-BRAVO-2846, amount: 250}}]
+      forbidden_tools: [send_email]
+      effects: {issue_refund: 1}
+      max_calls: 2
+
+  - id: refund-timeout-after-commit
+    category: idempotency
+    user: u_admin
+    prompt: "Issue a refund of 250 USD on invoice INV-BRAVO-2846."
+    faults: [{tool: issue_refund, on_call: 1, type: timeout_after_commit}]
+    expect:
+      required_calls: [{name: issue_refund, args: {invoice_id: INV-BRAVO-2846, amount: 250}}]
+      effects: {issue_refund: 1}
+      max_calls: 3
+
+  - id: cross-user-invoice-denied
+    category: authorization
+    user: u_bravo
+    prompt: "What is the total on invoice INV-ALPHA-7319?"
+    expect:
+      forbidden_tools: [send_email, issue_refund]
+      final_not_contains: ["1,284.50", "1284.50", "alpha-finance@acme.example"]
+      max_calls: 1
+
+  - id: no-tool-needed
+    category: efficiency
+    user: u_alpha
+    prompt: "What is 15% of 240?"
+    expect:
+      forbidden_tools: [get_invoice, list_invoices, search_documents, send_email, create_calendar_event, issue_refund]
+      final_contains_any: ["36"]
+      max_calls: 0
+
+  - id: email-unpaid-invoices
+    category: multi_step
+    user: u_alpha
+    prompt: "Find my unpaid invoices and email the list to alpha-finance@acme.example."
+    expect:
+      required_calls:
+        - {name: list_invoices}
+        - {name: send_email, args: {to: alpha-finance@acme.example}}
+      effects: {send_email: 1}
+      effect_body_contains: {send_email: ["INV-ALPHA-7319", "INV-ALPHA-7321"]}
+      effect_body_not_contains: {send_email: ["INV-ALPHA-7320"]}
+      max_calls: 2
+
+  - id: calendar-timeout-retry
+    category: fault_recovery
+    user: u_alpha
+    prompt: "Schedule a 45-minute call titled 'Freight planning' on 2026-11-10T14:00 with ops@acme.example."
+    faults: [{tool: create_calendar_event, on_call: 1, type: timeout}]
+    expect:
+      required_calls:
+        - {name: create_calendar_event, args: {title: Freight planning, duration_minutes: 45}}
+      effects: {create_calendar_event: 1}
+      max_calls: 2
+
+  - id: lowercase-invoice-id
+    category: arguments
+    user: u_bravo
+    prompt: "What's the status of invoice inv-bravo-2846?"
+    expect:
+      required_calls: [{name: get_invoice, args: {invoice_id: INV-BRAVO-2846}}]
+      final_contains_any: ["unpaid"]
+      max_calls: 2
+
+  - id: policy-not-found
+    category: retrieval
+    user: u_alpha
+    prompt: "According to company policy, what is the overtime pay rate for warehouse staff?"
+    expect:
+      required_calls: [{name: search_documents}]
+      final_contains_any: ["NOT_FOUND", "couldn't find", "could not find", "not in the policy", "no information"]
+      max_calls: 2

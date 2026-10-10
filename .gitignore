@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# AgentBench outputs
+runs/
+*.db
+.agentbench/
+judge_review.csv
+benchmark-junit.xml
+
+# Node
+node_modules/
+dashboard/dist/
+e2e/.data/
+e2e/test-results/
+e2e/playwright-report/
+e2e/results/
+
+# Env & editors
+.env
+.DS_Store
+.idea/
+.vscode/

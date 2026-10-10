@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentBench {{ run.label or run.id }}</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f4f6f8; --surface: #ffffff; --ink: #16202b; --ink-2: #4e5966; --muted: #7d8794;
+  --rule: #dce1e6; --grid: #e6e9ec; --accent: #1f5fad; --series: #2a78d6;
+  --pass: #0ca30c; --fail: #d03b3b; --error: #ec835a; --flaky: #fab219; --skip: #c3c9d0; --none: #eef1f4;
+  --code-bg: #f1f3f6;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #10141a; --surface: #171c23; --ink: #e6ebf0; --ink-2: #b4bcc6; --muted: #8a94a0;
+    --rule: #2a313b; --grid: #232a33; --accent: #6ea4ec; --series: #3987e5;
+    --skip: #4a525c; --none: #1e242c; --code-bg: #1d232b;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.55 var(--sans); }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 32px 24px 80px; }
+header { display: grid; gap: 12px; margin-bottom: 28px; }
+.brand { font-weight: 700; letter-spacing: -0.01em; color: var(--ink-2); }
+h1 { font-size: 34px; line-height: 1.15; margin: 0; letter-spacing: -0.02em; }
+h2 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+h3 { font-size: 16px; margin: 18px 0 8px; }
+.lede { color: var(--ink-2); margin: 0 0 16px; max-width: 72ch; }
+dl.meta { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0; }
+dl.meta div { display: grid; }
+dl.meta dt { color: var(--muted); font-size: 12px; }
+dl.meta dd { margin: 0; font-variant-numeric: tabular-nums; }
+.status-pill { display: inline-flex; align-items: center; gap: 6px; }
+.status-pill::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--pass); }
+.status-pill.aborted_budget::before, .status-pill.failed::before { background: var(--fail); }
+section.panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 22px 24px; margin: 18px 0; }
+.ledger-suite { margin: 14px 0 20px; }
+.ledger-suite h3 { margin: 0 0 6px; font-size: 14px; color: var(--ink-2); font-weight: 600; }
+.ledger-row { display: grid; grid-template-columns: 170px 1fr; align-items: center; gap: 10px; margin: 3px 0; }
+.ledger-row .t { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cells { display: grid; column-gap: 2px; }
+.cells.cats { column-gap: 2px; font-size: 11px; color: var(--muted); }
+.cells.cats span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-left: 1px solid var(--rule); padding-left: 4px; }
+.cell { height: 16px; border-radius: 2px; background: var(--none); display: block; min-width: 2px; }
+.cell.pass { background: var(--pass); } .cell.fail { background: var(--fail); } .cell.error { background: var(--error); }
+.cell.flaky { background: var(--flaky); } .cell.skip { background: var(--skip); }
+a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--ink-2); margin-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 14px; border-radius: 2px; display: inline-block; }
+.chart-wrap { max-width: 760px; margin-bottom: 8px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+@media (max-width: 860px) { .split { grid-template-columns: 1fr; } .ledger-row { grid-template-columns: 1fr; } }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+pre { background: var(--code-bg); padding: 12px; border-radius: 8px; overflow: auto; max-height: 360px; white-space: pre-wrap; word-break: break-word; margin: 6px 0 12px; }
+.chart { width: 100%; height: auto; display: block; }
+.chart .grid { stroke: var(--grid); stroke-width: 1; }
+.chart .tick { fill: var(--muted); font: 11px var(--sans); }
+.chart .label { fill: var(--ink-2); font: 12px var(--mono); }
+.chart .label.small { font-size: 11px; }
+.chart .value { fill: var(--ink); font: 600 12px var(--sans); }
+.chart .bar { fill: var(--series); }
+.chart .whisker { stroke: var(--ink); stroke-width: 1.5; }
+.chart .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .dot { fill: var(--series); stroke: var(--surface); stroke-width: 2; }
+.chart .hit { fill: transparent; }
+.chart .hit:hover { fill: var(--series); fill-opacity: .25; }
+.chart .span { fill: var(--series); } .chart .span.err { fill: var(--fail); }
+.verdict { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.verdict b { font-size: 28px; letter-spacing: -0.01em; }
+.v-pass { color: var(--pass); } .v-warn { color: #a36d00; } .v-block { color: var(--fail); }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--rule); color: var(--ink-2); }
+.tag.block { border-color: var(--fail); color: var(--fail); } .tag.warn { border-color: #c48a12; color: #a36d00; }
+.tag.pass { border-color: var(--pass); color: #0a7a0a; }
+.filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 14px; }
+.filters select, .filters input { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); }
+.filters input { min-width: 240px; }
+details.failure { border-top: 1px solid var(--rule); padding: 10px 0; }
+details.failure summary { cursor: pointer; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; list-style: none; }
+details.failure summary::-webkit-details-marker { display: none; }
+details.failure summary::before { content: "▸"; color: var(--muted); }
+details.failure[open] summary::before { content: "▾"; }
+details.failure:target { background: color-mix(in srgb, var(--flaky) 12%, transparent); }
+.f-title code { font-weight: 600; }
+.f-sub { color: var(--muted); font-size: 13px; }
+.f-body { padding: 8px 0 4px 28px; }
+.f-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 860px) { .f-grid { grid-template-columns: 1fr; } }
+.check { display: inline-flex; gap: 6px; align-items: center; margin-right: 12px; font-size: 13px; }
+.check::before { content: "✕"; color: var(--fail); font-weight: 700; }
+.muted { color: var(--muted); }
+.note { color: var(--ink-2); font-size: 13px; }
+footer { color: var(--muted); font-size: 13px; margin-top: 40px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="brand">AgentBench report</div>
+  <h1>{{ run.label or "Benchmark run" }}</h1>
+  <dl class="meta">
+    <div><dt>Run</dt><dd><code>{{ run.id }}</code></dd></div>
+    <div><dt>Status</dt><dd><span class="status-pill {{ run.status }}">{{ run.status.replace('_', ' ') }}</span></dd></div>
+    <div><dt>Started</dt><dd>{{ run.created_at[:19].replace('T', ' ') }} UTC</dd></div>
+    <div><dt>Duration</dt><dd>{{ run.summary.totals.duration_s }}s</dd></div>
+    <div><dt>Results</dt><dd>{{ run.summary.totals.passed }} of {{ run.summary.totals.executed }} passed</dd></div>
+    <div><dt>Errors</dt><dd>{{ run.summary.totals.errors }}</dd></div>
+    <div><dt>Spend</dt><dd>{{ usd(run.summary.totals.cost_usd) }}</dd></div>
+    <div><dt>Commit</dt><dd><code>{{ (run.manifest.git.sha or 'n/a')[:10] }}</code></dd></div>
+    <div><dt>Seed</dt><dd>{{ run.manifest.seed }}</dd></div>
+  </dl>
+</header>
+
+<section class="panel" aria-labelledby="ledger-h">
+  <h2 id="ledger-h">Every case, every target</h2>
+  <p class="lede">Each square is one test case. Failing squares link to their details below.</p>
+  {% for s in suites if s.matrix %}
+  <div class="ledger-suite">
+    <h3>{{ s.title }}</h3>
+    {% set n = s.matrix[0].cells|length %}{% set cw = 26 if n <= 30 else 12 %}
+    <div class="ledger-row">
+      <div></div>
+      <div class="cells cats" style="grid-template-columns: repeat({{ n }}, minmax(0, {{ cw }}px))">{% for g in s.groups %}<span style="grid-column: span {{ g.span }}" title="{{ g.name }}">{{ g.name.replace('_', ' ').replace('injection ', '') }}</span>{% endfor %}</div>
+    </div>
+    {% for row in s.matrix %}
+    <div class="ledger-row">
+      <div class="t" title="{{ row.target }}">{{ row.target }}</div>
+      <div class="cells" style="grid-template-columns: repeat({{ n }}, minmax(0, {{ cw }}px))">
+        {% for c in row.cells %}{% if c.anchor %}<a class="cell {{ c.status }}" href="#{{ c.anchor }}" title="{{ c.case }} ({{ c.category }}): {{ c.status }}" aria-label="{{ c.case }} {{ c.status }}"></a>{% else %}<span class="cell {{ c.status }}" title="{{ c.case }} ({{ c.category }}): {{ c.status }}"></span>{% endif %}{% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <div class="legend" aria-label="Legend">
+    <span><i style="background:var(--pass)"></i>Passed</span>
+    <span><i style="background:var(--fail)"></i>Failed an assertion</span>
+    <span><i style="background:var(--error)"></i>Errored (timeout, provider failure)</span>
+    <span><i style="background:var(--flaky)"></i>Mixed across repeats</span>
+    <span><i style="background:var(--skip)"></i>Skipped</span>
+  </div>
+</section>
+
+{% if gate %}
+<section class="panel" aria-labelledby="gate-h">
+  <h2 id="gate-h">Regression gate</h2>
+  <div class="verdict"><b class="v-{{ gate.verdict }}">{{ {'pass': 'Pass', 'warn': 'Investigate', 'block': 'Blocked'}[gate.verdict] }}</b>
+    <span class="note">Baseline <code>{{ gate.comparison.baseline_id }}</code> compared with this run.</span></div>
+  {% for w in gate.comparison.warnings %}<p class="note">{{ w }}</p>{% endfor %}
+  <div class="scroll"><table>
+    <thead><tr><th>Result</th><th>Check</th><th>Target</th><th class="num">Baseline</th><th class="num">Candidate</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for c in gate.checks if c.status != 'skipped' %}
+      <tr><td><span class="tag {{ c.status }}">{{ c.status }}</span></td><td><code>{{ c.suite }}.{{ c.metric }}</code></td><td><code>{{ c.pair }}</code></td>
+      <td class="num">{{ fmt(c.metric, c.baseline) }}</td><td class="num">{{ fmt(c.metric, c.candidate) }}</td><td>{{ c.detail }}</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% for sc in gate.comparison.suites if sc.paired_cases %}
+    <h3>{{ sc.suite }}: <code>{{ sc.pair }}</code></h3>
+    <p class="note">{{ sc.paired_cases }} paired cases. Pass rate changed {{ '%+.1f' % (sc.delta * 100) }}pp
+      (95% CI {{ '%+.1f' % (sc.delta_ci95[0] * 100) }} to {{ '%+.1f' % (sc.delta_ci95[1] * 100) }}pp), McNemar p = {{ '%.3g' % sc.mcnemar_p }}.
+      {{ sc.newly_failing|length }} newly failing, {{ sc.newly_passing|length }} newly passing.</p>
+    {% if sc.newly_failing %}<p class="note">Newly failing: {% for c in sc.newly_failing[:30] %}<code>{{ c }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% endfor %}
+</section>
+{% endif %}
+
+{% for s in suites %}
+<section class="panel" id="suite-{{ s.name }}" aria-labelledby="h-{{ s.name }}">
+  <h2 id="h-{{ s.name }}">{{ s.title }}</h2>
+  <p class="lede">{{ s.info.description }}.{% if s.info.dataset %} Dataset <code>{{ s.info.dataset.sha256 }}</code>, {{ s.info.dataset.cases }} cases.{% endif %}</p>
+  {% if s.name != 'load' %}
+  <div class="chart-wrap">{{ s.chart }}<p class="note">Pass rate with 95% Wilson confidence interval.</p></div>
+    <div class="scroll"><table class="metrics">
+      <thead><tr><th>Metric</th>{% for t in s.targets %}<th class="num"><code>{{ t }}</code></th>{% endfor %}</tr></thead>
+      <tbody>
+      {% set b = s.blocks %}
+      <tr><td>Pass rate</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].accuracy) }}</td>{% endfor %}</tr>
+      {% if s.name == 'core' %}
+        <tr><td>Schema validity</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].eval_metrics.schema_valid_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Field F1</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].eval_metrics.field_f1) }}</td>{% endfor %}</tr>
+        <tr><td>Citation accuracy</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].eval_metrics.citation_accuracy) }}</td>{% endfor %}</tr>
+        <tr><td>Hallucination on unanswerable</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].eval_metrics.hallucination_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Judge pass rate</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].eval_metrics.judge_pass_rate) }}</td>{% endfor %}</tr>
+      {% elif s.name == 'injection' %}
+        <tr><td>Attack success rate</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].attack_success_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Secret leak rate</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].secret_leak_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Injected instruction followed</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].instruction_follow_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Task still completed</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].task_completion_rate) }}</td>{% endfor %}</tr>
+      {% elif s.name == 'tool_use' %}
+        <tr><td>Tool selection accuracy</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].tool_selection_accuracy) }}</td>{% endfor %}</tr>
+        <tr><td>Argument accuracy</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].argument_accuracy) }}</td>{% endfor %}</tr>
+        <tr><td>Workflow completion</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].workflow_completion_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Fault recovery</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].fault_recovery_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Duplicate writes</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].duplicate_write_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Unauthorized actions</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].unauthorized_action_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Unnecessary calls</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].unnecessary_call_rate) }}</td>{% endfor %}</tr>
+      {% elif s.name == 'isolation' %}
+        <tr><td>Scenarios leaking</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].leakage_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Unauthorized disclosures</td>{% for t in s.targets %}<td class="num">{{ b[t].unauthorized_disclosures if b[t].unauthorized_disclosures is defined else '–' }}</td>{% endfor %}</tr>
+        <tr><td>Critical or high severity</td>{% for t in s.targets %}<td class="num">{{ (b[t].disclosures_by_severity or {}).get('critical', 0) + (b[t].disclosures_by_severity or {}).get('high', 0) }}</td>{% endfor %}</tr>
+        <tr><td>Session isolation pass rate</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].session_isolation_pass_rate) }}</td>{% endfor %}</tr>
+        <tr><td>Recall accuracy</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].recall_accuracy) }}</td>{% endfor %}</tr>
+      {% endif %}
+      <tr><td>Latency p50</td>{% for t in s.targets %}<td class="num">{{ ms(b[t].latency_ms.p50) }}</td>{% endfor %}</tr>
+      <tr><td>Latency p95</td>{% for t in s.targets %}<td class="num">{{ ms(b[t].latency_ms.p95) }}</td>{% endfor %}</tr>
+      <tr><td>Latency p99</td>{% for t in s.targets %}<td class="num">{{ ms(b[t].latency_ms.p99) }}</td>{% endfor %}</tr>
+      <tr><td>Error rate</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].error_rate) }}</td>{% endfor %}</tr>
+      <tr><td>Retry rate</td>{% for t in s.targets %}<td class="num">{{ pct(b[t].retry_rate) }}</td>{% endfor %}</tr>
+      <tr><td>Tokens in / out</td>{% for t in s.targets %}<td class="num">{{ '{:,}'.format(b[t].input_tokens or 0) }} / {{ '{:,}'.format(b[t].output_tokens or 0) }}</td>{% endfor %}</tr>
+      <tr><td>Cost per success</td>{% for t in s.targets %}<td class="num">{{ usd(b[t].cost_per_success_usd) }}</td>{% endfor %}</tr>
+      </tbody></table></div>
+  {% if s.name == 'core' %}
+    <h3>Pass rate by category</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Category</th>{% for t in s.targets %}<th class="num"><code>{{ t }}</code></th>{% endfor %}</tr></thead>
+      <tbody>{% for cat in s.categories %}<tr><td>{{ cat.replace('_', ' ') }}</td>{% for t in s.targets %}{% set c = (s.blocks[t].by_category or {}).get(cat) %}<td class="num">{% if c %}{{ pct(c.accuracy) }} <span class="muted">({{ c.passed }}/{{ c.n }})</span>{% else %}–{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table></div>
+  {% elif s.name == 'injection' %}
+    <h3>Attack success by technique</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Technique</th>{% for t in s.targets %}<th class="num"><code>{{ t }}</code></th>{% endfor %}</tr></thead>
+      <tbody>{% for cat in s.categories %}{% set k = cat.replace('injection_', '') %}<tr><td>{{ k.replace('_', ' ') }}</td>{% for t in s.targets %}{% set a = (s.blocks[t].by_attack or {}).get(k) %}<td class="num">{% if a %}{{ pct(a.attack_success_rate) }}{% else %}–{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table></div>
+  {% elif s.name == 'isolation' %}
+    <h3>Leaks by boundary</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Boundary</th>{% for t in s.targets %}<th class="num"><code>{{ t }}</code></th>{% endfor %}</tr></thead>
+      <tbody>{% for cat in s.categories %}<tr><td>{{ cat.replace('_', ' ') }}</td>{% for t in s.targets %}{% set bb = (s.blocks[t].by_boundary or {}).get(cat) %}<td class="num">{% if bb %}{{ bb.leaked }} of {{ bb.scenarios }}{% else %}–{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table></div>
+  {% endif %}
+  {% else %}
+    {% for t in s.targets %}{% set b = s.blocks[t] %}
+    <h3><code>{{ t }}</code></h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Stage</th><th class="num">Users</th><th class="num">Requests</th><th class="num">Throughput</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th><th class="num">Errors</th><th class="num">Timeouts</th><th class="num">Pass rate</th></tr></thead>
+      <tbody>{% for st in b.stages %}<tr><td>{{ st.stage }}</td><td class="num">{{ st.users }}</td><td class="num">{{ st.requests }}</td><td class="num">{{ st.throughput_rps }} rps</td>
+        <td class="num">{{ ms(st.latency_ms.p50) }}</td><td class="num">{{ ms(st.latency_ms.p95) }}</td><td class="num">{{ ms(st.latency_ms.p99) }}</td>
+        <td class="num">{{ pct(st.error_rate) }}</td><td class="num">{{ pct(st.timeout_rate) }}</td><td class="num">{{ pct(st.accuracy) }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="note">{{ b.total_requests }} requests in {{ b.wall_time_s }}s ({{ b.achieved_rps }} rps average, {{ b.peak_rps }} peak).
+      {% if b.accuracy_drop_under_load_pp is not none %}Pass rate fell {{ b.accuracy_drop_under_load_pp }}pp from the first stage to the worst stage.{% endif %}</p>
+    {% for ch in s.load_charts if ch.target == t %}
+    <div class="split">
+      <div><h3>Completed requests per second</h3>{{ ch.rps }}</div>
+      <div><h3>p95 latency per second</h3>{{ ch.p95 }}</div>
+    </div>
+    {% endfor %}
+    {% endfor %}
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if comparisons %}
+<section class="panel" aria-labelledby="cmp-h">
+  <h2 id="cmp-h">Paired comparisons</h2>
+  <p class="lede">Targets compared on the same cases. McNemar's test asks whether the disagreements lean one way more than chance would explain.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Suite</th><th>A</th><th>B</th><th class="num">A pass</th><th class="num">B pass</th><th class="num">Only A passed</th><th class="num">Only B passed</th><th class="num">p</th></tr></thead>
+    <tbody>{% for suite, rows in comparisons.items() %}{% for r in rows %}<tr><td>{{ suite }}</td><td><code>{{ r.a }}</code></td><td><code>{{ r.b }}</code></td>
+      <td class="num">{{ pct(r.a_accuracy) }}</td><td class="num">{{ pct(r.b_accuracy) }}</td><td class="num">{{ r.a_only_passed }}</td><td class="num">{{ r.b_only_passed }}</td>
+      <td class="num">{{ '<0.001' if r.mcnemar_p < 0.001 else '%.2g' % r.mcnemar_p }}{% if r.mcnemar_p < 0.05 %} <span class="tag">significant</span>{% endif %}</td></tr>{% endfor %}{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
+<section class="panel" aria-labelledby="fail-h">
+  <h2 id="fail-h">Failures</h2>
+  <p class="lede">{{ total_failing }} failing or errored results{% if total_failing > failures|length %}; the first {{ failures|length }} are shown{% endif %}. Each one lists the input, the expected result, what came back, which checks failed, the trace, and a command that reruns it.</p>
+  {% if failures %}
+  <div class="filters" role="search">
+    <label class="muted">Suite <select id="f-suite"><option value="">All</option>{% for s in failure_suites %}<option>{{ s }}</option>{% endfor %}</select></label>
+    <label class="muted">Target <select id="f-target"><option value="">All</option>{% for t in failure_targets %}<option>{{ t }}</option>{% endfor %}</select></label>
+    <input id="f-text" type="search" placeholder="Filter by case id or output" aria-label="Filter failures">
+    <span id="f-count" class="muted"></span>
+  </div>
+  <div id="failures">
+  {% for f in failures %}{% set r = f.r %}
+  <details class="failure" id="{{ f.anchor }}" data-suite="{{ r.suite }}" data-target="{{ r.target_id }}" data-text="{{ r.case_id }} {{ (r.output or '')[:300] }} {{ r.error or '' }}">
+    <summary>
+      <span class="f-title"><code>{{ r.case_id }}</code> <span class="muted">on</span> <code>{{ r.target_id }}</code>
+        <div class="f-sub">{{ r.suite }}, {{ r.category.replace('_', ' ') }}{% if r.trial %}, repeat {{ r.trial + 1 }}{% endif %}{% if r.error_kind %}, {{ r.error_kind }}{% endif %}</div></span>
+      <span class="tag {{ 'block' if r.status == 'failed' else 'warn' }}">{{ r.status }}</span>
+    </summary>
+    <div class="f-body">
+      {% if r.error %}<pre>{{ r.error }}</pre>{% endif %}
+      {% if f.failed_evals %}<p>{% for e in f.failed_evals %}<span class="check">{{ e.name }}</span>{% endfor %}</p>{% endif %}
+      <div class="f-grid">
+        <div><h3>Input</h3><pre>{{ f.input_json }}</pre></div>
+        <div><h3>Expected</h3><pre>{{ f.expected_json }}</pre></div>
+      </div>
+      <h3>Actual output</h3><pre>{{ r.output or '(empty)' }}</pre>
+      <h3>Checks</h3><pre>{{ f.evals_json }}</pre>
+      {% if f.trace_svg %}<h3>Trace</h3>{{ f.trace_svg }}{% endif %}
+      <p class="note">{{ ms(r.latency_ms) }}, {{ r.attempts }} attempt(s), {{ r.input_tokens }} input and {{ r.output_tokens }} output tokens, {{ usd(r.cost_usd) }}{% if r.models %}, model {{ r.models|join(', ') }}{% endif %}.</p>
+      <h3>Reproduce</h3><pre>{{ f.repro }}</pre>
+    </div>
+  </details>
+  {% endfor %}
+  </div>
+  {% else %}<p>No failures in this run.</p>{% endif %}
+</section>
+
+<section class="panel" aria-labelledby="man-h">
+  <h2 id="man-h">Reproducibility manifest</h2>
+  <p class="lede">Versions, configuration hash, dataset hashes, seeds and the model versions each provider reported.</p>
+  <details><summary>Show manifest</summary><pre>{{ manifest_json }}</pre></details>
+</section>
+<footer>Generated by AgentBench {{ run.manifest.agentbench_version }}. Results from mock targets are simulations that exercise the platform; they are not measurements of real models.</footer>
+</div>
+<script>
+(function () {
+  var suite = document.getElementById('f-suite'), target = document.getElementById('f-target'),
+      text = document.getElementById('f-text'), count = document.getElementById('f-count');
+  if (!suite) return;
+  function apply() {
+    var s = suite.value, t = target.value, q = text.value.toLowerCase(), shown = 0;
+    document.querySelectorAll('details.failure').forEach(function (d) {
+      var ok = (!s || d.dataset.suite === s) && (!t || d.dataset.target === t) &&
+               (!q || d.dataset.text.toLowerCase().indexOf(q) !== -1);
+      d.hidden = !ok; if (ok) shown++;
+    });
+    count.textContent = shown + ' shown';
+  }
+  [suite, target].forEach(function (el) { el.addEventListener('change', apply); });
+  text.addEventListener('input', apply);
+  function openHash() {
+    var el = location.hash && document.getElementById(location.hash.slice(1));
+    if (el && el.tagName === 'DETAILS') { el.open = true; }
+  }
+  window.addEventListener('hashchange', openHash); openHash(); apply();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+name: Benchmark regression gate
+
+# Runs the CI benchmark plan on every pull request, compares it with the committed baseline
+# (baselines/main.json), posts the verdict as a PR comment and fails the check when a change
+# should be blocked. Real providers join automatically when their secrets are configured.
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Config file
+        default: configs/ci.yaml
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      CONFIG: ${{ inputs.config || 'configs/ci.yaml' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+
+      - name: Run benchmark and gate against the baseline
+        id: gate
+        run: |
+          set +e
+          agentbench run -c "$CONFIG" --label "pr-${{ github.event.pull_request.number || github.run_id }}" \
+            --baseline baselines/main.json --json candidate.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          run_id=$(python -c "import json; print(json.load(open('candidate.json'))['id'])")
+          echo "run_dir=runs/$run_id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agentbench-report
+          path: |
+            ${{ steps.gate.outputs.run_dir }}
+            candidate.json
+
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        env:
+          RUN_DIR: ${{ steps.gate.outputs.run_dir }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = `${process.env.RUN_DIR}/gate.md`;
+            if (!fs.existsSync(path)) return;
+            const marker = '<!-- agentbench-gate -->';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n${fs.readFileSync(path, 'utf8')}\nFull HTML report: download the \`agentbench-report\` artifact from [this run](${runUrl}).`;
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+      - name: Publish JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentbench-junit
+          path: ${{ steps.gate.outputs.run_dir }}/*.xml
+
+      - name: Fail when the gate blocks
+        if: steps.gate.outputs.exit_code != '0'
+        run: |
+          echo "AgentBench regression gate blocked this change. See the PR comment and the report artifact."
+          exit 1

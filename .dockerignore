@@ -1,0 +1,12 @@
+.git
+.github
+**/node_modules
+dashboard/dist
+e2e
+runs
+*.db
+.agentbench
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache

@@ -1,0 +1,63 @@
+# AgentBench with PostgreSQL run history, the dashboard, and a reference agent to test over HTTP.
+#
+#   docker compose up --build                       # dashboard on http://localhost:8000
+#   docker compose run --rm agentbench demo --fast  # populate it with demo runs
+#   docker compose --profile tracing up             # adds Jaeger on http://localhost:16686
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentbench
+      POSTGRES_PASSWORD: agentbench
+      POSTGRES_DB: agentbench
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentbench"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  agentbench:
+    build: .
+    environment:
+      AGENTBENCH_DATABASE_URL: postgresql://agentbench:agentbench@postgres:5432/agentbench
+      # Real providers are picked up automatically when these are set (see .env.example).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      AGENT_URL: http://reference-agent:8080
+    ports:
+      - "8000:8000"
+    volumes:
+      - runs:/app/runs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  reference-agent:
+    build: .
+    command: ["agent", "serve", "--host", "0.0.0.0", "--port", "8080", "--preset", "secure"]
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 10s
+      retries: 5
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    profiles: ["tracing"]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
+volumes:
+  pgdata:
+  runs:
